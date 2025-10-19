@@ -43,10 +43,15 @@ FRONTEND_ORIGINS = [
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=FRONTEND_ORIGINS,  # Hangi origin'lere izin veriliyor
+    allow_origins=[  # local dev
+        "http://localhost:3000",
+        "http://127.0.0.1:3000",
+    ],
+    # prod: tüm vercel.app projelerini kabul et (seninkini de kapsar)
+    allow_origin_regex=r"https://.*\.vercel\.app$",
     allow_credentials=True,
-    allow_methods=["*"],             # GET, POST, PATCH, DELETE...
-    allow_headers=["*"],             # Authorization, Content-Type...
+    allow_methods=["*"],      # OPTIONS dahil
+    allow_headers=["*"],      # Authorization dahil
 )
 
 # -----------------------------------------------------------------------------
