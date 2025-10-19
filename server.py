@@ -31,6 +31,24 @@ db = client[os.environ['DB_NAME']]
 app = FastAPI()
 api_router = APIRouter(prefix="/api")
 
+from fastapi.middleware.cors import CORSMiddleware
+
+# Vercel üretim URL'in ve local dev adreslerin
+FRONTEND_ORIGINS = [
+    "http://localhost:3000",
+    "http://127.0.0.1:3000",
+    "http://localhost:5173",        # Vite kullanıyorsan
+    "https://csgo-frontend-0.vercel.app",  # <-- senin Vercel URL’in
+]
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=FRONTEND_ORIGINS,  # Hangi origin'lere izin veriliyor
+    allow_credentials=True,
+    allow_methods=["*"],             # GET, POST, PATCH, DELETE...
+    allow_headers=["*"],             # Authorization, Content-Type...
+)
+
 # -----------------------------------------------------------------------------
 # STARTUP: indexes (email unique)
 # -----------------------------------------------------------------------------
