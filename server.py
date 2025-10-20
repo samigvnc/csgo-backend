@@ -25,10 +25,6 @@ mongo_url = os.environ['MONGO_URL']
 client = AsyncIOMotorClient(mongo_url)
 db = client[os.environ['DB_NAME']]
 
-@app.get("/api/ping")
-async def ping():
-    return {"ok": True}
-
 
 # -----------------------------------------------------------------------------
 # APP & ROUTER
@@ -42,6 +38,10 @@ app = FastAPI(
 api_router = APIRouter(prefix="/api")
 
 from fastapi.middleware.cors import CORSMiddleware
+
+@app.get("/api/ping")
+async def ping():
+    return {"ok": True}
 
 app.add_middleware(
     CORSMiddleware,
