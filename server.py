@@ -91,6 +91,28 @@ api_router = APIRouter(prefix="/api")
 async def ping():
     return {"ok": True}
 
+class CaseCreate(BaseModel):
+    name: str
+    price: float = 0.0
+    image: str = ""
+    isPremium: bool = False
+    isNew: bool = False
+    isEvent: bool = False
+    contents: list = []
+    contentsCount: Optional[int] = None
+
+def case_out(doc: Dict) -> Dict:
+    return {
+        "_id": str(doc.get("_id")) if doc.get("_id") else None,
+        "name": doc.get("name", ""),
+        "price": float(doc.get("price", 0.0)),
+        "image": doc.get("image", ""),
+        "isPremium": bool(doc.get("isPremium", False)),
+        "isNew": bool(doc.get("isNew", False)),
+        "isEvent": bool(doc.get("isEvent", False)),
+        "contents": doc.get("contents", []) or [],
+        "contentsCount": doc.get("contentsCount", None) if doc.get("contentsCount", None) is not None else (len(doc.get("contents", []) or [])),
+    }
 
 
 # -----------------------------------------------------------------------------
@@ -185,6 +207,28 @@ async def require_admin(user: dict = Depends(get_current_user)):
     if user.get("role") != "admin":
         raise HTTPException(status_code=403, detail="Admin only")
     return user
+
+@api_router.get("/admin/cases", dependencies=[Depends(require_admin)])
+async def admin_list_cases():
+    docs = await db.cases.find({}, {"name": 1}).sort([("_id", -1)]).to_list(500)
+    return [{"_id": str(d["_id"]), "name": d.get("name","")} for d in docs]
+
+@api_router.post("/admin/cases", dependencies=[Depends(require_admin)])
+async def admin_create_case(input: CaseCreate):
+    doc = input.model_dump()
+    res = await db.cases.insert_one(doc)
+    created = await db.cases.find_one({"_id": res.inserted_id})
+    return case_out(created)
+
+@api_router.delete("/admin/cases/{case_id}", dependencies=[Depends(require_admin)])
+async def admin_delete_case(case_id: str):
+    if not ObjectId.is_valid(case_id):
+        raise HTTPException(404, "Case not found")
+    res = await db.cases.delete_one({"_id": ObjectId(case_id)})
+    if res.deleted_count == 0:
+        raise HTTPException(404, "Case not found")
+    return {"ok": True}
+
 
 # -----------------------------------------------------------------------------
 # ROUTES
