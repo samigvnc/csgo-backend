@@ -9,7 +9,8 @@ from pydantic import BaseModel, Field, ConfigDict
 from typing import List, Optional
 import uuid
 from datetime import datetime, timezone, timedelta
-
+from typing import Dict
+from bson import ObjectId
 # --- Auth imports ---
 from jose import JWTError, jwt
 from passlib.context import CryptContext
@@ -20,6 +21,33 @@ except Exception:
     class Decimal128: pass  # yoksa sorun etme
 
 from fastapi.middleware.cors import CORSMiddleware
+def case_out(doc: Dict) -> Dict:
+    """
+    Mongo doc -> API output
+    _id'yi stringe çevirir; eksik alanları toleranslı doldurur.
+    """
+    if not doc:
+        return {}
+    out = {
+        "_id": str(doc.get("_id")) if doc.get("_id") else None,
+        "name": doc.get("name", ""),
+        "price": float(doc.get("price", 0.0)),
+        "image": doc.get("image", ""),
+        "isPremium": bool(doc.get("isPremium", False)),
+        "isNew": bool(doc.get("isNew", False)),
+        "isEvent": bool(doc.get("isEvent", False)),
+        # contents boş olabilir; UI sayıyı göstermek için contentsCount da destekliyor
+        "contents": doc.get("contents", []) or [],
+        "contentsCount": doc.get("contentsCount", None),
+    }
+    # contentsCount yoksa contents uzunluğunu türet
+    if out["contentsCount"] is None:
+        try:
+            out["contentsCount"] = len(out["contents"])
+        except Exception:
+            out["contentsCount"] = 0
+    return out
+
 
 # -----------------------------------------------------------------------------
 # ENV / DB
@@ -234,6 +262,54 @@ async def create_user(input: UserCreate):
     await db.users.insert_one(doc)
     return {k: v for k, v in doc.items() if k != "password_hash"}
 
+# ---- Public: cases list & detail ----
+@api_router.get("/public/cases")
+async def list_cases(
+    search: str = Query("", description="name üzerinde arama"),
+    type: Optional[str] = Query(None, pattern="^(premium|regular)$"),
+    limit: int = Query(48, ge=1, le=200),
+    page: int = Query(1, ge=1),
+):
+    """
+    GET /api/public/cases?search=&type=premium|regular&limit=48&page=1
+    Atlas'taki 'cases' koleksiyonundan döner.
+    """
+    q: Dict = {}
+
+    # Arama: text index yoksa regex ile case-insensitive
+    if search:
+        q["name"] = {"$regex": search, "$options": "i"}
+
+    if type == "premium":
+        q["isPremium"] = True
+    elif type == "regular":
+        q["isPremium"] = {"$ne": True}
+
+    skip = (page - 1) * limit
+
+    cursor = db.cases.find(q).skip(skip).limit(limit).sort([("_id", -1)])
+    docs = await cursor.to_list(length=limit)
+    items = [case_out(d) for d in docs]
+    total = await db.cases.count_documents(q)
+
+    return {"items": items, "total": total, "page": page}
+
+
+@api_router.get("/public/cases/{case_id}")
+async def get_case(case_id: str):
+    """
+    GET /api/public/cases/<id>
+    """
+    if not ObjectId.is_valid(case_id):
+        raise HTTPException(status_code=404, detail="Case not found")
+
+    doc = await db.cases.find_one({"_id": ObjectId(case_id)})
+    if not doc:
+        raise HTTPException(status_code=404, detail="Case not found")
+
+    return case_out(doc)
+
+
 # -----------------------------------------------------------------------------
 # PUBLIC (geçici geliştirme uçları)  ⚠️ Canlıda JWT ile /users/me yapacağız
 # -----------------------------------------------------------------------------
@@ -288,19 +364,26 @@ async def get_user_by_email(email: str = Query(..., min_length=3)):
             {"_id": 0, "password_hash": 0}
         )
         if not user:
-            # 404 normal durum (kayıt yoksa)
             raise HTTPException(404, "User not found")
 
         # Eski kayıtlar/şemalar için toleranslı ol:
         user_id = user.get("id") or user.get("uid") or ""
         balance_val = to_float_safe(user.get("balance", 0.0))
+        
+        # --- ÇÖZÜM BURADA ---
+        # user["email"] yerine user.get("email") kullanıyoruz.
+        user_email = user.get("email")
+        if not user_email:
+            # Eğer email yoksa, bu beklenmedik bir durum, loglayıp hata dönelim.
+            logging.error(f"User document with id {user_id} is missing an email field.")
+            raise HTTPException(500, "User data is inconsistent")
 
-        return {"id": user_id, "email": user["email"], "balance": balance_val}
+        return {"id": user_id, "email": user_email, "balance": balance_val}
+    
     except HTTPException:
         raise
     except Exception as e:
         logging.exception(f"user-by-email crashed for {email}: {e}")
-        # 200 yerine 500 dönmeye devam edelim ama artık logda sebebi görebileceksin
         raise HTTPException(500, "internal error")
 
 class BalanceDelta(BaseModel):
@@ -321,7 +404,7 @@ async def add_balance(email: str, body: BalanceDelta):
 # -----------------------------------------------------------------------------
 # INCLUDE ROUTER & MIDDLEWARE
 # -----------------------------------------------------------------------------
-app.include_router(api_router)
+
 
 # -----------------------------------------------------------------------------
 # LOGGING & SHUTDOWN
@@ -335,3 +418,5 @@ logger = logging.getLogger(__name__)
 @app.on_event("shutdown")
 async def shutdown_db_client():
     client.close()
+
+app.include_router(api_router)
