@@ -470,7 +470,10 @@ async def start_battle(bid: str, _: BattleStart):
         raise HTTPException(404, "Battle not found")
 
     if battle.get("status") != "waiting":
-        return _battle_out(battle)
+        # zaten finished ise içindeki rounds'u döndürmek için dokümanı yükle
+        out = _battle_out(battle)
+        out["rounds"] = battle.get("rounds", [])
+        return out
 
     players = battle.get("players", [])
     maxP = _max_players(battle["mode"])
@@ -479,27 +482,44 @@ async def start_battle(bid: str, _: BattleStart):
     if len(players) > maxP:
         players = players[:maxP]
 
-    # Basit simülasyon: her case için her oyuncuya bir "drop" değeri üret.
-    # İçerik listesi DB’de olmadığı için fiyat etrafında dağılım yapıyoruz.
+    cases = battle.get("cases") or []
     totals = {p: 0.0 for p in players}
     rng = random.Random()
-    for c in (battle.get("cases") or []):
-        base = float(c.get("price", 0.0))
-        mu = base * 0.9
-        sigma = max(0.5, base * 0.6)
-        for p in players:
-            val = max(0.1, rng.gauss(mu, sigma))  # negatif olmasın
-            totals[p] += val
 
-    # kazananı belirle
+    rounds = []  # <- EKLEDİK: [{case: {...}, rolls: [{player, value, label}]}...]
+    for c in cases:
+        base = float(c.get("price", 0.0))
+        mu = max(0.1, base * 0.9)
+        sigma = max(0.5, base * 0.6)
+        round_rolls = []
+        for p in players:
+            val = max(0.05, rng.gauss(mu, sigma))
+            totals[p] += val
+            round_rolls.append({
+                "player": p,
+                "value": float(val),
+                # görsel isim/etiket (gerçek drop yoksa basit)
+                "label": f"{c.get('name','Case')} Drop",
+                # isteğe bağlı renk/rarity mock
+                "rarityColor": "#4B69FF",
+                "rarityName": "Mil-Spec"
+            })
+        rounds.append({
+            "case": {"_id": str(c.get("_id", "")), "name": c.get("name"), "price": float(base), "image": c.get("image","")},
+            "rolls": round_rolls
+        })
+
     winner = max(totals.items(), key=lambda kv: kv[1])[0] if totals else None
 
     await db.battles.update_one(
         {"_id": battle["_id"]},
-        {"$set": {"status": "finished", "totals": totals, "winner": winner}}
+        {"$set": {"status": "finished", "totals": totals, "winner": winner, "rounds": rounds}}
     )
     battle = await db.battles.find_one({"_id": battle["_id"]})
-    return _battle_out(battle)
+
+    out = _battle_out(battle)
+    out["rounds"] = rounds  # response_model esnek; extra alanı döndürüyoruz
+    return out
 
 @api_router.get("/public/battles/{bid}", response_model=BattleOut)
 async def get_battle(bid: str):
