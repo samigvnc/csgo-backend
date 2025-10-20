@@ -1,4 +1,4 @@
-from fastapi import FastAPI, APIRouter, Depends, HTTPException, status
+from fastapi import FastAPI, APIRouter, Depends, HTTPException, status, Query
 from dotenv import load_dotenv
 from starlette.middleware.cors import CORSMiddleware
 from motor.motor_asyncio import AsyncIOMotorClient
@@ -14,6 +14,10 @@ from datetime import datetime, timezone, timedelta
 from jose import JWTError, jwt
 from passlib.context import CryptContext
 from fastapi.security import OAuth2PasswordBearer
+try:
+    from bson.decimal128 import Decimal128
+except Exception:
+    class Decimal128: pass  # yoksa sorun etme
 
 # -----------------------------------------------------------------------------
 # ENV / DB
@@ -22,8 +26,10 @@ ROOT_DIR = Path(__file__).parent
 load_dotenv(ROOT_DIR / '.env')
 
 mongo_url = os.environ['MONGO_URL']
+db_name   = os.environ['DB_NAME']
+
 client = AsyncIOMotorClient(mongo_url)
-db = client[os.environ['DB_NAME']]
+db = client[db_name]
 
 
 # -----------------------------------------------------------------------------
@@ -45,17 +51,10 @@ async def ping():
 
 app.add_middleware(
     CORSMiddleware,
-    # Lokal geliştirmenin yanında prod Vercel alan adını da kapsayalım:
-    allow_origins=[
-        "http://localhost:3000",
-        "http://127.0.0.1:3000",
-        "https://csgo-frontend-0.vercel.app",
-    ],
-    # Alternatif: tüm vercel.app subdomainlerini açmak istersen:
-    # allow_origin_regex=r"https://.*\.vercel\.app$",
-    allow_credentials=True,           # cookie/bearer vs. kullanıyorsan true kalabilir
-    allow_methods=["*"],              # OPTIONS dahil
-    allow_headers=["*"],              # Authorization, Content-Type vs.
+    allow_origin_regex=r"^https?:\/\/.*$",  # GEÇİCİ: herkese izin
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
 )
 
 # -----------------------------------------------------------------------------
@@ -265,13 +264,36 @@ class UserBalanceOut(BaseModel):
     email: str
     balance: float
 
+def to_float_safe(x):
+    try:
+        if isinstance(x, Decimal128):
+            return float(x.to_decimal())
+        return float(x)
+    except Exception:
+        return 0.0
+
 @api_router.get("/public/user-by-email", response_model=UserBalanceOut)
-async def get_user_by_email(email: str):
-    user = await db.users.find_one({"email": email}, {"_id": 0, "password_hash": 0})
-    if not user:
-        raise HTTPException(404, "User not found")
-    # user: id, email, balance, role (role'u döndürmüyoruz)
-    return {"id": user["id"], "email": user["email"], "balance": float(user.get("balance", 0.0))}
+async def get_user_by_email(email: str = Query(..., min_length=3)):
+    try:
+        user = await db.users.find_one(
+            {"email": email},
+            {"_id": 0, "password_hash": 0}
+        )
+        if not user:
+            # 404 normal durum (kayıt yoksa)
+            raise HTTPException(404, "User not found")
+
+        # Eski kayıtlar/şemalar için toleranslı ol:
+        user_id = user.get("id") or user.get("uid") or ""
+        balance_val = to_float_safe(user.get("balance", 0.0))
+
+        return {"id": user_id, "email": user["email"], "balance": balance_val}
+    except HTTPException:
+        raise
+    except Exception as e:
+        logging.exception(f"user-by-email crashed for {email}: {e}")
+        # 200 yerine 500 dönmeye devam edelim ama artık logda sebebi görebileceksin
+        raise HTTPException(500, "internal error")
 
 class BalanceDelta(BaseModel):
     delta: float  # + / -
