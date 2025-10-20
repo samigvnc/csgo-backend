@@ -33,25 +33,19 @@ api_router = APIRouter(prefix="/api")
 
 from fastapi.middleware.cors import CORSMiddleware
 
-# Vercel üretim URL'in ve local dev adreslerin
-FRONTEND_ORIGINS = [
-    "http://localhost:3000",
-    "http://127.0.0.1:3000",
-    "http://localhost:5173",        # Vite kullanıyorsan
-    "https://csgo-frontend-0.vercel.app",  # <-- senin Vercel URL’in
-]
-
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=[  # local dev
+    # Lokal geliştirmenin yanında prod Vercel alan adını da kapsayalım:
+    allow_origins=[
         "http://localhost:3000",
         "http://127.0.0.1:3000",
+        "https://csgo-frontend-0.vercel.app",
     ],
-    # prod: tüm vercel.app projelerini kabul et (seninkini de kapsar)
-    allow_origin_regex=r"https://.*\.vercel\.app$",
-    allow_credentials=True,
-    allow_methods=["*"],      # OPTIONS dahil
-    allow_headers=["*"],      # Authorization dahil
+    # Alternatif: tüm vercel.app subdomainlerini açmak istersen:
+    # allow_origin_regex=r"https://.*\.vercel\.app$",
+    allow_credentials=True,           # cookie/bearer vs. kullanıyorsan true kalabilir
+    allow_methods=["*"],              # OPTIONS dahil
+    allow_headers=["*"],              # Authorization, Content-Type vs.
 )
 
 # -----------------------------------------------------------------------------
