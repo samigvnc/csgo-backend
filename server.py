@@ -19,6 +19,8 @@ try:
 except Exception:
     class Decimal128: pass  # yoksa sorun etme
 
+from fastapi.middleware.cors import CORSMiddleware
+
 # -----------------------------------------------------------------------------
 # ENV / DB
 # -----------------------------------------------------------------------------
@@ -41,13 +43,7 @@ app = FastAPI(
     redoc_url=None,
     openapi_url="/openapi.json",
 )
-api_router = APIRouter(prefix="/api")
 
-from fastapi.middleware.cors import CORSMiddleware
-
-@app.get("/api/ping")
-async def ping():
-    return {"ok": True}
 
 app.add_middleware(
     CORSMiddleware,
@@ -60,6 +56,14 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+api_router = APIRouter(prefix="/api")
+
+
+@app.get("/api/ping")
+async def ping():
+    return {"ok": True}
+
+
 
 # -----------------------------------------------------------------------------
 # STARTUP: indexes (email unique)
