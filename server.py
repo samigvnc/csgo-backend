@@ -6,7 +6,7 @@ import os
 import logging
 from pathlib import Path
 from pydantic import BaseModel, Field, ConfigDict
-from typing import List, Optional
+from typing import List, Optional, Any, Literal
 import uuid
 from datetime import datetime, timezone, timedelta
 from typing import Dict
@@ -19,7 +19,7 @@ try:
     from bson.decimal128 import Decimal128
 except Exception:
     class Decimal128: pass  # yoksa sorun etme
-
+import random
 from fastapi.middleware.cors import CORSMiddleware
 def case_out(doc: Dict) -> Dict:
     """
@@ -356,6 +356,159 @@ async def admin_delete_case(case_id: str):
     if res.deleted_count == 0:
         raise HTTPException(404, "Case not found")
     return {"ok": True}
+
+class BattleCreate(BaseModel):
+    creator_email: str
+    mode: Literal["1v1", "1v1v1", "1v1v1v1"]
+    case_ids: List[str] = Field(default_factory=list)  # Mongo _id string'leri
+    entry_price: float = 0.0
+    is_private: bool = False
+
+class BattleOut(BaseModel):
+    id: str
+    mode: str
+    cases: List[Dict[str, Any]]
+    entry_price: float
+    players: List[str]
+    maxPlayers: int
+    status: Literal["waiting", "running", "finished"]
+    totals: Dict[str, float] = {}
+    winner: Optional[str] = None
+    is_private: bool = False
+
+def _max_players(mode: str) -> int:
+    return {"1v1": 2, "1v1v1": 3, "1v1v1v1": 4}[mode]
+
+def _battle_out(doc) -> dict:
+    return {
+        "id": str(doc["_id"]),
+        "mode": doc["mode"],
+        "cases": doc.get("cases", []),
+        "entry_price": float(doc.get("entry_price", 0.0)),
+        "players": doc.get("players", []),
+        "maxPlayers": _max_players(doc["mode"]),
+        "status": doc.get("status", "waiting"),
+        "totals": {k: float(v) for k, v in (doc.get("totals", {}) or {}).items()},
+        "winner": doc.get("winner"),
+        "is_private": bool(doc.get("is_private", False)),
+    }
+
+async def _load_cases(ids: List[str]) -> List[dict]:
+    valid = [ObjectId(i) for i in ids if ObjectId.is_valid(i)]
+    if not valid:
+        return []
+    cur = db.cases.find({"_id": {"$in": valid}}, {"name": 1, "price": 1, "image": 1})
+    docs = await cur.to_list(200)
+    return [{"_id": str(d["_id"]), "name": d.get("name"), "price": float(d.get("price", 0)), "image": d.get("image", "")} for d in docs]
+
+@api_router.get("/public/battles", response_model=List[BattleOut])
+async def list_battles(status: Optional[str] = None):
+    q = {}
+    if status in {"waiting", "running", "finished"}:
+        q["status"] = status
+    cur = db.battles.find(q).sort([("_id", -1)])
+    docs = await cur.to_list(500)
+    return [_battle_out(d) for d in docs]
+
+@api_router.post("/public/battles", response_model=BattleOut)
+async def create_battle(input: BattleCreate):
+    maxP = _max_players(input.mode)
+    # Kasaları DB’den getir
+    cases = await _load_cases(input.case_ids)
+    doc = {
+        "mode": input.mode,
+        "cases": cases,                         # her case: {_id, name, price, image}
+        "entry_price": float(input.entry_price) if input.entry_price else float(sum(c["price"] for c in cases)),
+        "players": [input.creator_email],
+        "status": "waiting",                    # waiting -> running -> finished
+        "totals": {},
+        "winner": None,
+        "is_private": bool(input.is_private),
+    }
+    res = await db.battles.insert_one(doc)
+    created = await db.battles.find_one({"_id": res.inserted_id})
+    return _battle_out(created)
+
+class BattleJoin(BaseModel):
+    email: str
+
+@api_router.post("/public/battles/{bid}/join", response_model=BattleOut)
+async def join_battle(bid: str, body: BattleJoin):
+    if not ObjectId.is_valid(bid):
+        raise HTTPException(404, "Battle not found")
+    battle = await db.battles.find_one({"_id": ObjectId(bid)})
+    if not battle:
+        raise HTTPException(404, "Battle not found")
+
+    if battle.get("status") != "waiting":
+        raise HTTPException(400, "Battle not joinable")
+
+    players = battle.get("players", [])
+    if body.email in players:
+      # zaten içerdeyse no-op
+      return _battle_out(battle)
+
+    maxP = _max_players(battle["mode"])
+    if len(players) >= maxP:
+        raise HTTPException(400, "Room is full")
+
+    players.append(body.email)
+    await db.battles.update_one({"_id": battle["_id"]}, {"$set": {"players": players}})
+    battle["players"] = players
+    return _battle_out(battle)
+
+class BattleStart(BaseModel):
+    # opsiyonel: başlatan creator mı kontrol edebilirsin; basit MVP’de atlıyoruz
+    pass
+
+@api_router.post("/public/battles/{bid}/start", response_model=BattleOut)
+async def start_battle(bid: str, _: BattleStart):
+    if not ObjectId.is_valid(bid):
+        raise HTTPException(404, "Battle not found")
+    battle = await db.battles.find_one({"_id": ObjectId(bid)})
+    if not battle:
+        raise HTTPException(404, "Battle not found")
+
+    if battle.get("status") != "waiting":
+        return _battle_out(battle)
+
+    players = battle.get("players", [])
+    maxP = _max_players(battle["mode"])
+    if len(players) < 2:
+        raise HTTPException(400, "Need at least 2 players")
+    if len(players) > maxP:
+        players = players[:maxP]
+
+    # Basit simülasyon: her case için her oyuncuya bir "drop" değeri üret.
+    # İçerik listesi DB’de olmadığı için fiyat etrafında dağılım yapıyoruz.
+    totals = {p: 0.0 for p in players}
+    rng = random.Random()
+    for c in (battle.get("cases") or []):
+        base = float(c.get("price", 0.0))
+        mu = base * 0.9
+        sigma = max(0.5, base * 0.6)
+        for p in players:
+            val = max(0.1, rng.gauss(mu, sigma))  # negatif olmasın
+            totals[p] += val
+
+    # kazananı belirle
+    winner = max(totals.items(), key=lambda kv: kv[1])[0] if totals else None
+
+    await db.battles.update_one(
+        {"_id": battle["_id"]},
+        {"$set": {"status": "finished", "totals": totals, "winner": winner}}
+    )
+    battle = await db.battles.find_one({"_id": battle["_id"]})
+    return _battle_out(battle)
+
+@api_router.get("/public/battles/{bid}", response_model=BattleOut)
+async def get_battle(bid: str):
+    if not ObjectId.is_valid(bid):
+        raise HTTPException(404, "Battle not found")
+    battle = await db.battles.find_one({"_id": ObjectId(bid)})
+    if not battle:
+        raise HTTPException(404, "Battle not found")
+    return _battle_out(battle)
 
 # -----------------------------------------------------------------------------
 # PUBLIC (geçici geliştirme uçları)  ⚠️ Canlıda JWT ile /users/me yapacağız
