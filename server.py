@@ -298,13 +298,6 @@ async def list_cases(
     return {"items": items, "total": total, "page": page}
 
 
-def normalize_case(doc: dict) -> dict:
-    d = {**doc}
-    if "_id" in d:
-        d.pop("_id", None)       # frontend'e _id göndermiyoruz
-    if "contentsCount" not in d:
-        d["contentsCount"] = len(d.get("contents", []) or [])
-    return d
 
 @api_router.get("/public/cases/{case_id}")
 async def get_case(case_id: str):
@@ -322,7 +315,7 @@ async def get_case(case_id: str):
     if not doc:
         raise HTTPException(404, "case not found")
 
-    return normalize_case(doc)
+    return get_case(doc)
 
 
 def case_out(doc: Dict) -> Dict:
