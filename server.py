@@ -301,11 +301,11 @@ async def list_cases(
 
 @api_router.get("/public/cases/{case_id}")
 async def get_case(case_id: str):
-    # 1) int id ile ara
+# 1) int id ile ara
     doc = None
     if case_id.isdigit():
-        doc = await db.cases.find_one({"id": int(case_id)})
-    # 2) değilse ObjectId gibi dene (varsa)
+        doc = await db.cases.find_one({"id": int(case_id)}) # <-- Burası artık çalışacak
+# 2) değilse ObjectId gibi dene (varsa)
     if doc is None:
         try:
             doc = await db.cases.find_one({"_id": ObjectId(case_id)})
@@ -315,7 +315,8 @@ async def get_case(case_id: str):
     if not doc:
         raise HTTPException(404, "case not found")
 
-    return get_case(doc)
+# Hatalı 'normalize_case' yerine 'case_out' kullan:
+    return case_out(doc)
 
 
 def case_out(doc: Dict) -> Dict:
