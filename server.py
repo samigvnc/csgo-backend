@@ -21,32 +21,32 @@ except Exception:
     class Decimal128: pass  # yoksa sorun etme
 import random
 from fastapi.middleware.cors import CORSMiddleware
-def case_out(doc: Dict) -> Dict:
-    """
-    Mongo doc -> API output
-    _id'yi stringe çevirir; eksik alanları toleranslı doldurur.
-    """
-    if not doc:
-        return {}
-    out = {
-        "_id": str(doc.get("_id")) if doc.get("_id") else None,
-        "name": doc.get("name", ""),
-        "price": float(doc.get("price", 0.0)),
-        "image": doc.get("image", ""),
-        "isPremium": bool(doc.get("isPremium", False)),
-        "isNew": bool(doc.get("isNew", False)),
-        "isEvent": bool(doc.get("isEvent", False)),
-        # contents boş olabilir; UI sayıyı göstermek için contentsCount da destekliyor
-        "contents": doc.get("contents", []) or [],
-        "contentsCount": doc.get("contentsCount", None),
-    }
-    # contentsCount yoksa contents uzunluğunu türet
-    if out["contentsCount"] is None:
-        try:
-            out["contentsCount"] = len(out["contents"])
-        except Exception:
-            out["contentsCount"] = 0
-    return out
+# def case_out(doc: Dict) -> Dict:
+#     """
+#     Mongo doc -> API output
+#     _id'yi stringe çevirir; eksik alanları toleranslı doldurur.
+#     """
+#     if not doc:
+#         return {}
+#     out = {
+#         "_id": str(doc.get("_id")) if doc.get("_id") else None,
+#         "name": doc.get("name", ""),
+#         "price": float(doc.get("price", 0.0)),
+#         "image": doc.get("image", ""),
+#         "isPremium": bool(doc.get("isPremium", False)),
+#         "isNew": bool(doc.get("isNew", False)),
+#         "isEvent": bool(doc.get("isEvent", False)),
+#         # contents boş olabilir; UI sayıyı göstermek için contentsCount da destekliyor
+#         "contents": doc.get("contents", []) or [],
+#         "contentsCount": doc.get("contentsCount", None),
+#     }
+#     # contentsCount yoksa contents uzunluğunu türet
+#     if out["contentsCount"] is None:
+#         try:
+#             out["contentsCount"] = len(out["contents"])
+#         except Exception:
+#             out["contentsCount"] = 0
+#     return out
 
 
 # -----------------------------------------------------------------------------
@@ -315,7 +315,7 @@ async def get_case(case_id: str):
 
 def case_out(doc: Dict) -> Dict:
     return {
-        "_id": str(doc.get("_id")) if doc.get("_id") else None,
+        "_id": str(doc.get("_id")) if doc.get("_id") else None, 
         "name": doc.get("name", ""),
         "price": float(doc.get("price", 0.0)),
         "image": doc.get("image", ""),
