@@ -298,19 +298,31 @@ async def list_cases(
     return {"items": items, "total": total, "page": page}
 
 
+def normalize_case(doc: dict) -> dict:
+    d = {**doc}
+    if "_id" in d:
+        d.pop("_id", None)       # frontend'e _id göndermiyoruz
+    if "contentsCount" not in d:
+        d["contentsCount"] = len(d.get("contents", []) or [])
+    return d
+
 @api_router.get("/public/cases/{case_id}")
 async def get_case(case_id: str):
-    """
-    GET /api/public/cases/<id>
-    """
-    if not ObjectId.is_valid(case_id):
-        raise HTTPException(status_code=404, detail="Case not found")
+    # 1) int id ile ara
+    doc = None
+    if case_id.isdigit():
+        doc = await db.cases.find_one({"id": int(case_id)})
+    # 2) değilse ObjectId gibi dene (varsa)
+    if doc is None:
+        try:
+            doc = await db.cases.find_one({"_id": ObjectId(case_id)})
+        except Exception:
+            pass
 
-    doc = await db.cases.find_one({"_id": ObjectId(case_id)})
     if not doc:
-        raise HTTPException(status_code=404, detail="Case not found")
+        raise HTTPException(404, "case not found")
 
-    return case_out(doc)
+    return normalize_case(doc)
 
 
 def case_out(doc: Dict) -> Dict:
