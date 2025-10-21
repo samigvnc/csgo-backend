@@ -321,6 +321,7 @@ async def get_case(case_id: str):
 def case_out(doc: Dict) -> Dict:
     return {
         "_id": str(doc.get("_id")) if doc.get("_id") else None, 
+        "id": doc.get("id"),
         "name": doc.get("name", ""),
         "price": float(doc.get("price", 0.0)),
         "image": doc.get("image", ""),
